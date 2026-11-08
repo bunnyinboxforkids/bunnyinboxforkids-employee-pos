@@ -271,8 +271,10 @@ $("loadMonthlyReport").addEventListener("click",async()=>{
     const t=data?.totals||{};
     $("monthlyReportSummary").innerHTML=`
       <div class="grid">
-        <div class="metric"><span class="muted">Combined sales</span><strong>${money(t.sales_total||0)}</strong></div>
-        <div class="metric"><span class="muted">Transactions</span><strong>${Number(t.transactions)||0}</strong></div>
+        <div class="metric"><span class="muted">Gross sales</span><strong>${money(t.gross_sales||0)}</strong></div>
+        <div class="metric"><span class="muted">Returns value</span><strong>${money(t.returns_value||0)}</strong></div>
+        <div class="metric"><span class="muted">Net sales</span><strong>${money(t.net_sales||0)}</strong></div>
+        <div class="metric"><span class="muted">Transactions made</span><strong>${Number(t.transactions)||0}</strong></div>
         <div class="metric"><span class="muted">Units sold</span><strong>${Number(t.units_sold)||0}</strong></div>
         <div class="metric"><span class="muted">Units returned</span><strong>${Number(t.units_returned)||0}</strong></div>
         <div class="metric"><span class="muted">Discount earned</span><strong>${money(t.discount_earned||0)}</strong></div>
@@ -283,7 +285,8 @@ $("loadMonthlyReport").addEventListener("click",async()=>{
     $("monthlyReportEmployees").innerHTML=rows.length?`<h3>Employee breakdown</h3>`+rows.map(e=>`
       <div class="item">
         <strong>${safe(e.full_name)}${e.is_deleted?" (Deleted)":""}</strong>
-        <div class="muted">Sales: ${money(e.sales_total)} · Transactions: ${e.transactions} · Sold: ${e.units_sold} · Returned: ${e.units_returned}</div>
+        <div class="muted">Gross sales: ${money(e.gross_sales)} · Returns: ${money(e.returns_value)} · Net sales: ${money(e.net_sales)}</div>
+        <div class="muted">Transactions made: ${e.transactions} · Units sold: ${e.units_sold} · Returned: ${e.units_returned}</div>
         <div class="muted">Discount earned: ${money(e.discount_earned)} · Paid this month: ${money(e.discount_paid_month)} · Outstanding at month end: ${money(e.discount_outstanding_at_month_end)}</div>
       </div>`).join(""):"No employee records for this month.";
     $("downloadMonthlyCsv").disabled=false;
@@ -304,7 +307,9 @@ $("downloadMonthlyCsv").addEventListener("click",()=>{
     ["Bunnyinboxforkids Combined Monthly Sales Report",latestMonthlyReport.month],
     [],
     ["Company totals"],
-    ["Combined sales (NGN)",t.sales_total||0],
+    ["Gross sales (NGN)",t.gross_sales||0],
+    ["Returns value (NGN)",t.returns_value||0],
+    ["Net sales (NGN)",t.net_sales||0],
     ["Transactions",t.transactions||0],
     ["Units sold",t.units_sold||0],
     ["Units returned",t.units_returned||0],
@@ -312,10 +317,10 @@ $("downloadMonthlyCsv").addEventListener("click",()=>{
     ["Discount paid this month (NGN)",t.discount_paid_month||0],
     ["Outstanding discount at month end (NGN)",t.discount_outstanding_at_month_end||0],
     [],
-    ["Employee","Account status","Net sales (NGN)","Transactions","Units sold","Units returned","Discount earned (NGN)","Discount paid this month (NGN)","Outstanding discount at month end (NGN)"]
+    ["Employee","Account status","Gross sales (NGN)","Returns value (NGN)","Net sales (NGN)","Transactions made","Units sold","Units returned","Discount earned (NGN)","Discount paid this month (NGN)","Outstanding discount at month end (NGN)"]
   ];
   (latestMonthlyReport.employees||[]).forEach(e=>rows.push([
-    e.full_name,e.is_deleted?"Deleted":"Active",e.sales_total,e.transactions,e.units_sold,e.units_returned,
+    e.full_name,e.is_deleted?"Deleted":"Active",e.gross_sales,e.returns_value,e.net_sales,e.transactions,e.units_sold,e.units_returned,
     e.discount_earned,e.discount_paid_month,e.discount_outstanding_at_month_end
   ]));
   const csv="\uFEFF"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n");
