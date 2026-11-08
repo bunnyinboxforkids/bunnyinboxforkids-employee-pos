@@ -46,7 +46,7 @@ button:disabled{opacity:.5}.secondary{background:#eee7df;color:#443629}.danger{b
 <section id="login" class="panel" style="max-width:430px;margin:8vh auto">
 <h1>Employee sign in</h1>
 <p class="muted">Use the account details provided by your CEO.</p>
-<form id="loginForm">
+<form id="loginForm" onsubmit="event.preventDefault()">
 <label>Email address</label><input id="email" type="email" required>
 <label>Password</label><input id="password" type="password" required>
 <button class="full" id="loginButton">Sign in</button>
