@@ -88,6 +88,17 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
     <div id="createEmployeeMessage" class="notice hidden"></div>
   </div>
   <div class="panel">
+    <h2>Combined Monthly Company Sales</h2>
+    <p class="muted">One report combining every employee's sales for the selected month. Returns are deducted from sales.</p>
+    <label for="adminReportMonth">Report month</label>
+    <input id="adminReportMonth" type="month">
+    <button type="button" id="loadMonthlyReport" class="full">Load Monthly Report</button>
+    <div id="monthlyReportMessage" class="notice hidden"></div>
+    <div id="monthlyReportSummary"></div>
+    <div id="monthlyReportEmployees"></div>
+    <button type="button" id="downloadMonthlyCsv" class="full" disabled>Download Monthly Report (CSV)</button>
+  </div>
+  <div class="panel">
     <h2>Employee Accounts &amp; Performance</h2>
     <div id="adminEmployeeList">Loading employees...</div>
   </div>
@@ -222,7 +233,7 @@ async function loadAdminDashboard(){
   const {data,error}=await db.rpc("employee_admin_dashboard");
   if(error)throw error;
   const employees=data?.employees||[];
-  $("adminEmployees").textContent=employees.length;
+  $("adminEmployees").textContent=employees.filter(e=>!e.is_deleted).length;
   $("adminSalesToday").textContent=money(data?.sales_today||0);
   $("adminTransactions").textContent=data?.sales_count_today||0;
   $("adminEmployeeList").innerHTML=employees.length?employees.map(e=>`
@@ -230,14 +241,91 @@ async function loadAdminDashboard(){
       <div class="line">
         <div><strong>${safe(e.full_name)}</strong>
           <div class="muted">Sales: ${Number(e.sales_count)||0} · Stock: ${Number(e.stock_units)||0} · Total: ${money(e.sales_total)}</div>
-          <div class="muted">${e.is_active?"Active":"Inactive"}</div>
+          <div class="muted">${e.is_deleted?"Deleted":(e.is_active?"Active":"Inactive")}</div>
         </div>
-        <button class="secondary" type="button" onclick="setEmployeeActive('${safe(e.user_id)}',${!e.is_active})">${e.is_active?"Deactivate":"Activate"}</button>
+        ${e.is_deleted
+          ? `<button class="secondary" type="button" onclick="restoreEmployee('${safe(e.user_id)}','${safe(e.full_name)}')">Restore</button>`
+          : `<button class="secondary" type="button" onclick="setEmployeeActive('${safe(e.user_id)}',${!e.is_active})">${e.is_active?"Deactivate":"Activate"}</button>`}
       </div>
       <div class="notice">Unpaid discount balance: <strong>${money(e.discount_outstanding||0)}</strong><br>Discount paid so far: ${money(e.discount_paid_total||0)}</div>
-      <button type="button" ${Number(e.discount_outstanding||0)<=0?"disabled":""} onclick="payEmployeeDiscount('${safe(e.user_id)}','${safe(e.full_name)}')">Mark Discount as Paid</button>
+      ${!e.is_deleted?`<button type="button" ${Number(e.discount_outstanding||0)<=0?"disabled":""} onclick="payEmployeeDiscount('${safe(e.user_id)}','${safe(e.full_name)}')">Mark Discount as Paid</button>
+      <button class="secondary" type="button" onclick="deleteEmployee('${safe(e.user_id)}','${safe(e.full_name)}')">Delete Employee</button>`:"<div class='muted'>Account archived. Previous records are retained.</div>"}
     </div>`).join(""):"No employee accounts yet.";
 }
+
+let latestMonthlyReport=null;
+const reportMonthInput=$("adminReportMonth");
+if(reportMonthInput){
+  const now=new Date();
+  reportMonthInput.value=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
+}
+$("loadMonthlyReport").addEventListener("click",async()=>{
+  const month=$("adminReportMonth").value;
+  if(!month){msg("monthlyReportMessage","Choose a month first.",true);return;}
+  const button=$("loadMonthlyReport");
+  button.disabled=true;button.textContent="Loading report…";
+  try{
+    const {data,error}=await db.rpc("employee_admin_monthly_report",{p_month:month+"-01"});
+    if(error)throw error;
+    latestMonthlyReport=data;
+    const t=data?.totals||{};
+    $("monthlyReportSummary").innerHTML=`
+      <div class="grid">
+        <div class="metric"><span class="muted">Combined sales</span><strong>${money(t.sales_total||0)}</strong></div>
+        <div class="metric"><span class="muted">Transactions</span><strong>${Number(t.transactions)||0}</strong></div>
+        <div class="metric"><span class="muted">Units sold</span><strong>${Number(t.units_sold)||0}</strong></div>
+        <div class="metric"><span class="muted">Units returned</span><strong>${Number(t.units_returned)||0}</strong></div>
+        <div class="metric"><span class="muted">Discount earned</span><strong>${money(t.discount_earned||0)}</strong></div>
+        <div class="metric"><span class="muted">Discount paid that month</span><strong>${money(t.discount_paid_month||0)}</strong></div>
+        <div class="metric"><span class="muted">Outstanding at month end</span><strong>${money(t.discount_outstanding_at_month_end||0)}</strong></div>
+      </div>`;
+    const rows=data?.employees||[];
+    $("monthlyReportEmployees").innerHTML=rows.length?`<h3>Employee breakdown</h3>`+rows.map(e=>`
+      <div class="item">
+        <strong>${safe(e.full_name)}${e.is_deleted?" (Deleted)":""}</strong>
+        <div class="muted">Sales: ${money(e.sales_total)} · Transactions: ${e.transactions} · Sold: ${e.units_sold} · Returned: ${e.units_returned}</div>
+        <div class="muted">Discount earned: ${money(e.discount_earned)} · Paid this month: ${money(e.discount_paid_month)} · Outstanding at month end: ${money(e.discount_outstanding_at_month_end)}</div>
+      </div>`).join(""):"No employee records for this month.";
+    $("downloadMonthlyCsv").disabled=false;
+    msg("monthlyReportMessage","Monthly company report loaded successfully.");
+  }catch(err){
+    latestMonthlyReport=null;$("downloadMonthlyCsv").disabled=true;
+    msg("monthlyReportMessage",err.message||"Could not load monthly report.",true);
+  }finally{button.disabled=false;button.textContent="Load Monthly Report";}
+});
+function csvCell(value){
+  const s=String(value??"");
+  return '"'+s.replace(/"/g,'""')+'"';
+}
+$("downloadMonthlyCsv").addEventListener("click",()=>{
+  if(!latestMonthlyReport)return;
+  const t=latestMonthlyReport.totals||{};
+  const rows=[
+    ["Bunnyinboxforkids Combined Monthly Sales Report",latestMonthlyReport.month],
+    [],
+    ["Company totals"],
+    ["Combined sales (NGN)",t.sales_total||0],
+    ["Transactions",t.transactions||0],
+    ["Units sold",t.units_sold||0],
+    ["Units returned",t.units_returned||0],
+    ["Discount earned (NGN)",t.discount_earned||0],
+    ["Discount paid this month (NGN)",t.discount_paid_month||0],
+    ["Outstanding discount at month end (NGN)",t.discount_outstanding_at_month_end||0],
+    [],
+    ["Employee","Account status","Net sales (NGN)","Transactions","Units sold","Units returned","Discount earned (NGN)","Discount paid this month (NGN)","Outstanding discount at month end (NGN)"]
+  ];
+  (latestMonthlyReport.employees||[]).forEach(e=>rows.push([
+    e.full_name,e.is_deleted?"Deleted":"Active",e.sales_total,e.transactions,e.units_sold,e.units_returned,
+    e.discount_earned,e.discount_paid_month,e.discount_outstanding_at_month_end
+  ]));
+  const csv="\uFEFF"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download="Bunnyinboxforkids_Monthly_Sales_"+latestMonthlyReport.month+".csv";
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+});
+
 $("createEmployeeForm").addEventListener("submit",async e=>{
   e.preventDefault();const button=$("createEmployeeButton");button.disabled=true;
   try{
@@ -263,6 +351,25 @@ window.payEmployeeDiscount=async(id,name)=>{
     await loadAdminDashboard();
   }catch(err){alert(err.message||"Could not record discount payment.");}
 };
+window.deleteEmployee=async(id,name)=>{
+  if(!confirm("Are you sure you want to delete this employee?\\n\\nYes: mark the account as deleted and block sign-in.\\nNo: cancel. Previous sales, stock, returns and payment history will be kept."))return;
+  try{
+    const {error}=await db.rpc("employee_admin_set_deleted",{p_employee_id:id,p_is_deleted:true});
+    if(error)throw error;
+    alert(name+" has been marked as deleted. Their records have been retained.");
+    await loadAdminDashboard();
+  }catch(err){alert(err.message||"Could not delete employee.");}
+};
+window.restoreEmployee=async(id,name)=>{
+  if(!confirm("Restore "+name+"'s employee account? This will reactivate the account and allow sign-in again."))return;
+  try{
+    const {error}=await db.rpc("employee_admin_set_deleted",{p_employee_id:id,p_is_deleted:false});
+    if(error)throw error;
+    alert(name+"'s account has been restored.");
+    await loadAdminDashboard();
+  }catch(err){alert(err.message||"Could not restore employee.");}
+};
+
 window.setEmployeeActive=async(id,active)=>{
   if(!confirm(active?"Activate this employee?":"Deactivate this employee?"))return;
   try{
