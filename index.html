@@ -55,8 +55,6 @@ button:disabled{opacity:.5}.secondary{background:#eee7df;color:#443629}.danger{b
 </section>
  
 
-
-
 <section id="adminApp" class="hidden">
   <h1 id="adminWelcome">CEO Dashboard</h1>
   <p class="muted">Employee management and business overview</p>
@@ -269,7 +267,6 @@ $("createEmployeeForm").addEventListener("submit",async e=>{
     }
 });
 
-
 window.setEmployeeActive=async(id,active)=>{
   if(!confirm(active?"Activate this employee?":"Deactivate this employee?"))return;
   const {error}=await db.rpc("employee_admin_set_active",{
@@ -322,8 +319,6 @@ async function refreshAll(){
 
  
  
-
-
 
 async function loadStock(){
  const {data,error}=await db.from("employee_stock").select("id,barcode,product_name,size_label,colour,remaining_qty,unit_price").eq("employee_id",currentUser.id).order("product_name");
