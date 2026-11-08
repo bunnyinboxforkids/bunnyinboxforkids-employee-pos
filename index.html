@@ -117,7 +117,11 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
   <button type="button" class="secondary" id="downloadCsvTemplate">Download CSV template</button>
   <label for="stockCsv">Choose CSV file</label>
   <input id="stockCsv" type="file" accept=".csv,text/csv">
-  <button type="button" class="full" id="importCsvButton">Import CSV stock</button>
+  <div id="csvFileName" class="muted" aria-live="polite">No CSV file selected.</div>
+  <div class="actions">
+    <button type="button" class="secondary" id="clearCsvButton">Remove selected CSV</button>
+    <button type="button" id="importCsvButton">Import CSV stock</button>
+  </div>
   <div id="csvMessage" class="notice hidden"></div>
 </div>
 <h2>Add one product manually</h2>
@@ -377,6 +381,16 @@ $("downloadCsvTemplate").addEventListener("click",()=>{
   const url=URL.createObjectURL(blob),a=document.createElement("a");
   a.href=url;a.download="employee_stock_upload_template.csv";a.click();URL.revokeObjectURL(url);
 });
+$("stockCsv").addEventListener("change",()=>{
+  const file=$("stockCsv").files[0];
+  $("csvFileName").textContent=file?("Selected file: "+file.name):"No CSV file selected.";
+  $("csvMessage").classList.add("hidden");
+});
+$("clearCsvButton").addEventListener("click",()=>{
+  $("stockCsv").value="";
+  $("csvFileName").textContent="No CSV file selected.";
+  $("csvMessage").classList.add("hidden");
+});
 $("importCsvButton").addEventListener("click",async()=>{
   const file=$("stockCsv").files[0],button=$("importCsvButton");
   if(!file)return msg("csvMessage","Choose a CSV file first.",true);
@@ -387,6 +401,7 @@ $("importCsvButton").addEventListener("click",async()=>{
     if(error)throw error;
     msg("csvMessage",rows.length+" product rows imported successfully into your employee stock.");
     $("stockCsv").value="";
+    $("csvFileName").textContent="No CSV file selected.";
     await loadStock();
   }catch(err){msg("csvMessage",err.message||"CSV import failed.",true);}
   finally{button.disabled=false;}
@@ -486,13 +501,38 @@ window.recordReturn=async id=>{
 async function startScanner(target,inputId){
   if(typeof Html5Qrcode==="undefined")return alert("Barcode scanner library did not load. You can enter the barcode manually.");
   try{
-    const scannerObj=new Html5Qrcode(target);
+    const previous=target==="reader"?scanner:saleScanner;
+    if(previous){
+      try{if(previous.isScanning)await previous.stop();await previous.clear();}catch(_){}
+    }
+    const formats=[
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.ITF
+    ];
+    const scannerObj=new Html5Qrcode(target,{formatsToSupport:formats,verbose:false});
     if(target==="reader")scanner=scannerObj;else saleScanner=scannerObj;
-    await scannerObj.start({facingMode:"environment"},{fps:10,qrbox:{width:230,height:130}},text=>{
-      $(inputId).value=text;scannerObj.stop().catch(()=>{});
-      if(inputId==="saleBarcode")addByBarcode(text);
-    });
-  }catch(err){alert("Camera could not start. Check camera permission or enter the barcode manually.");}
+    await scannerObj.start(
+      {facingMode:"environment"},
+      {fps:15,qrbox:{width:280,height:150},aspectRatio:1.777},
+      async decodedText=>{
+        const code=String(decodedText||"").trim();
+        if(!code)return;
+        $(inputId).value=code;
+        try{await scannerObj.stop();}catch(_){}
+        try{await scannerObj.clear();}catch(_){}
+        if(inputId==="saleBarcode")addByBarcode(code);
+      },
+      ()=>{}
+    );
+  }catch(err){
+    console.error("Barcode scanner error:",err);
+    alert("The camera opened but could not start barcode reading. Check camera permission, lighting and barcode focus, or enter the barcode manually.");
+  }
 }
 async function stopScanner(which){
   const s=which==="stock"?scanner:saleScanner;
