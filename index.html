@@ -225,7 +225,7 @@ async function loadAdminDashboard(){
         <button class="secondary" type="button" onclick="setEmployeeActive('${safe(e.user_id)}',${!e.is_active})">${e.is_active?"Deactivate":"Activate"}</button>
       </div>
       <div class="notice">Unpaid discount balance: <strong>${money(e.discount_outstanding||0)}</strong><br>Discount paid so far: ${money(e.discount_paid_total||0)}</div>
-      <button type="button" ${Number(e.discount_outstanding||0)<=0?"disabled":""} onclick="payEmployeeDiscount('${safe(e.user_id)}','${safe(e.full_name)}')">Discount Paid — full balance</button>
+      <button type="button" ${Number(e.discount_outstanding||0)<=0?"disabled":""} onclick="payEmployeeDiscount('${safe(e.user_id)}','${safe(e.full_name)}')">Mark Discount as Paid</button>
     </div>`).join(""):"No employee accounts yet.";
 }
 $("createEmployeeForm").addEventListener("submit",async e=>{
@@ -245,11 +245,11 @@ $("createEmployeeForm").addEventListener("submit",async e=>{
   finally{button.disabled=false;}
 });
 window.payEmployeeDiscount=async(id,name)=>{
-  if(!confirm("Confirm cash payment to "+name+"?\\n\\nThis records the FULL outstanding discount balance and clears it to zero."))return;
+  if(!confirm("Mark the full outstanding discount balance for "+name+" as paid?\\n\\nThis records the payment in the POS and clears the balance to zero. It does not transfer money."))return;
   try{
     const {data,error}=await db.rpc("employee_admin_pay_discount",{p_employee_id:id});
     if(error)throw error;
-    alert("Cash payment recorded: "+money(data)+". The outstanding balance is now cleared.");
+    alert("Marked as paid: "+money(data)+". The outstanding discount balance is now ₦0. The record is saved in the POS payment history.");
     await loadAdminDashboard();
   }catch(err){alert(err.message||"Could not record discount payment.");}
 };
@@ -331,17 +331,26 @@ async function loadDiscountBalance(){
 async function loadSales(){
   if(!currentUser)throw new Error("Please sign in again.");
   const {data,error}=await db.from("employee_sales")
-    .select("id,sale_ref,total,payment_method,payment_status,created_at")
+    .select("id,sale_ref,total,payment_method,payment_status,created_at,employee_sale_items(quantity,returned_qty,unit_price,unit_discount,line_total)")
     .eq("employee_id",currentUser.id).order("created_at",{ascending:false}).limit(100);
   if(error)throw error;
-  const rows=data||[],start=new Date();start.setHours(0,0,0,0);
-  const today=rows.filter(x=>new Date(x.created_at)>=start);
+  const rows=(data||[]).map(x=>{
+    const items=x.employee_sale_items||[];
+    const netTotal=items.length?items.reduce((sum,item)=>{
+      const returned=Number(item.returned_qty||0);
+      const netUnit=Number(item.unit_price||0)-Number(item.unit_discount||100);
+      return sum+Math.max(0,Number(item.line_total||0)-returned*netUnit);
+    },0):Number(x.total||0);
+    return {...x,netTotal};
+  });
+  const start=new Date();start.setHours(0,0,0,0);
+  const today=rows.filter(x=>new Date(x.created_at)>=start&&x.netTotal>0);
   $("salesCount").textContent=today.length;
-  $("salesTotal").textContent=revealed.salesTotal?money(today.reduce((s,x)=>s+Number(x.total||0),0)):"••••••";
+  $("salesTotal").textContent=revealed.salesTotal?money(today.reduce((s,x)=>s+x.netTotal,0)):"••••••";
   $("salesList").innerHTML=rows.length?rows.map(x=>`
     <div class="item line"><div><strong>${safe(x.sale_ref)}</strong>
       <div class="muted">${new Date(x.created_at).toLocaleString("en-NG")} · ${safe(x.payment_method)} · ${safe(x.payment_status)}</div>
-    </div><strong>${revealed.salesHistory?money(x.total):"••••••"}</strong></div>`).join(""):"No sales yet.";
+    </div><strong>${revealed.salesHistory?money(x.netTotal):"••••••"}</strong></div>`).join(""):"No sales yet.";
 }
 
 function parseCsvLine(line){
@@ -494,7 +503,7 @@ window.recordReturn=async id=>{
   try{
     const {error}=await db.rpc("employee_record_return",{p_sale_item_id:id,p_quantity:qty,p_reason:reason});
     if(error)throw error;
-    alert("Return recorded. Stock quantity restored.");await loadReturns();await loadStock();
+    alert("Return recorded. Stock quantity restored. Sales and discount figures have been updated.");await loadReturns();await loadStock();await loadSales();await loadDiscountBalance();
   }catch(err){alert(err.message||"Could not record return.");}
 };
 
