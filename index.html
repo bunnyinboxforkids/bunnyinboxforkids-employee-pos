@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bunnyinboxforkids Employee POS</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#f7f3ed;color:#302820;font-family:Arial,sans-serif}
@@ -505,20 +505,13 @@ async function startScanner(target,inputId){
     if(previous){
       try{if(previous.isScanning)await previous.stop();await previous.clear();}catch(_){}
     }
-    const formats=[
-      Html5QrcodeSupportedFormats.CODE_128,
-      Html5QrcodeSupportedFormats.CODE_39,
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.ITF
-    ];
-    const scannerObj=new Html5Qrcode(target,{formatsToSupport:formats,verbose:false});
+    // Match the known-working CEO POS scanner setup: pinned library version
+    // and automatic barcode-format detection (no restrictive format list).
+    const scannerObj=new Html5Qrcode(target);
     if(target==="reader")scanner=scannerObj;else saleScanner=scannerObj;
     await scannerObj.start(
       {facingMode:"environment"},
-      {fps:15,qrbox:{width:280,height:150},aspectRatio:1.777},
+      {fps:10,qrbox:{width:260,height:120}},
       async decodedText=>{
         const code=String(decodedText||"").trim();
         if(!code)return;
