@@ -99,6 +99,18 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
     <button type="button" id="downloadMonthlyCsv" class="full" disabled>Download Monthly Report (CSV)</button>
   </div>
   <div class="panel">
+    <h2>Yearly Company Sales Statement</h2>
+    <p class="muted">Combined annual statement for all employees, with a month-by-month summary and employee breakdown. Returns are deducted from net sales.</p>
+    <label for="adminReportYear">Report year</label>
+    <input id="adminReportYear" type="number" min="2000" max="2200" step="1">
+    <button type="button" id="loadYearlyReport" class="full">Load Yearly Statement</button>
+    <div id="yearlyReportMessage" class="notice hidden"></div>
+    <div id="yearlyReportSummary"></div>
+    <div id="yearlyReportMonths"></div>
+    <div id="yearlyReportEmployees"></div>
+    <button type="button" id="downloadYearlyCsv" class="full" disabled>Download Yearly Statement (CSV)</button>
+  </div>
+  <div class="panel">
     <h2>Employee Accounts &amp; Performance</h2>
     <div id="adminEmployeeList">Loading employees...</div>
   </div>
@@ -252,6 +264,95 @@ async function loadAdminDashboard(){
       <button class="secondary" type="button" onclick="deleteEmployee('${safe(e.user_id)}','${safe(e.full_name)}')">Delete Employee</button>`:"<div class='muted'>Account archived. Previous records are retained.</div>"}
     </div>`).join(""):"No employee accounts yet.";
 }
+
+
+let latestYearlyReport=null;
+const yearInput=$("adminReportYear");
+if(yearInput)yearInput.value=String(new Date().getFullYear());
+
+$("loadYearlyReport").addEventListener("click",async()=>{
+  const year=Number($("adminReportYear").value);
+  if(!Number.isInteger(year)||year<2000||year>2200){
+    msg("yearlyReportMessage","Enter a valid report year.",true);return;
+  }
+  const button=$("loadYearlyReport");
+  button.disabled=true;button.textContent="Loading statement…";
+  try{
+    const {data,error}=await db.rpc("employee_admin_yearly_report",{p_year:year});
+    if(error)throw error;
+    latestYearlyReport=data;
+    const t=data?.totals||{};
+    $("yearlyReportSummary").innerHTML=`
+      <h3>Company annual totals</h3>
+      <div class="grid">
+        <div class="metric"><span class="muted">Gross sales</span><strong>${money(t.gross_sales||0)}</strong></div>
+        <div class="metric"><span class="muted">Returns value</span><strong>${money(t.returns_value||0)}</strong></div>
+        <div class="metric"><span class="muted">Net sales</span><strong>${money(t.net_sales||0)}</strong></div>
+        <div class="metric"><span class="muted">Transactions made</span><strong>${Number(t.transactions)||0}</strong></div>
+        <div class="metric"><span class="muted">Units sold</span><strong>${Number(t.units_sold)||0}</strong></div>
+        <div class="metric"><span class="muted">Units returned</span><strong>${Number(t.units_returned)||0}</strong></div>
+        <div class="metric"><span class="muted">Discount earned</span><strong>${money(t.discount_earned||0)}</strong></div>
+        <div class="metric"><span class="muted">Discount paid during year</span><strong>${money(t.discount_paid_year||0)}</strong></div>
+        <div class="metric"><span class="muted">Outstanding at year end</span><strong>${money(t.discount_outstanding_at_year_end||0)}</strong></div>
+      </div>`;
+    const months=data?.months||[];
+    const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
+    $("yearlyReportMonths").innerHTML=`<h3>Month-by-month company sales</h3>`+months.map(m=>`
+      <div class="item">
+        <strong>${monthNames[Number(m.month)-1]}</strong>
+        <div class="muted">Gross: ${money(m.gross_sales)} · Returns: ${money(m.returns_value)} · Net: ${money(m.net_sales)}</div>
+        <div class="muted">Transactions: ${m.transactions} · Units sold: ${m.units_sold} · Returned: ${m.units_returned}</div>
+      </div>`).join("");
+    const employees=data?.employees||[];
+    $("yearlyReportEmployees").innerHTML=`<h3>Employee yearly breakdown</h3>`+(employees.length?employees.map(e=>`
+      <div class="item">
+        <strong>${safe(e.full_name)}${e.is_deleted?" (Deleted)":""}</strong>
+        <div class="muted">Gross: ${money(e.gross_sales)} · Returns: ${money(e.returns_value)} · Net: ${money(e.net_sales)}</div>
+        <div class="muted">Transactions: ${e.transactions} · Sold: ${e.units_sold} · Returned: ${e.units_returned}</div>
+        <div class="muted">Discount earned: ${money(e.discount_earned)} · Paid this year: ${money(e.discount_paid_year)} · Outstanding at year end: ${money(e.discount_outstanding_at_year_end)}</div>
+      </div>`).join(""):"No employee accounts found.");
+    $("downloadYearlyCsv").disabled=false;
+    msg("yearlyReportMessage","Yearly company statement loaded successfully.");
+  }catch(err){
+    latestYearlyReport=null;$("downloadYearlyCsv").disabled=true;
+    msg("yearlyReportMessage",err.message||"Could not load yearly statement.",true);
+  }finally{button.disabled=false;button.textContent="Load Yearly Statement";}
+});
+
+$("downloadYearlyCsv").addEventListener("click",()=>{
+  if(!latestYearlyReport)return;
+  const t=latestYearlyReport.totals||{};
+  const rows=[
+    ["Bunnyinboxforkids Yearly Company Sales Statement",latestYearlyReport.year],
+    [],
+    ["Company annual totals"],
+    ["Gross sales (NGN)",t.gross_sales||0],
+    ["Returns value (NGN)",t.returns_value||0],
+    ["Net sales (NGN)",t.net_sales||0],
+    ["Transactions made",t.transactions||0],
+    ["Units sold",t.units_sold||0],
+    ["Units returned",t.units_returned||0],
+    ["Discount earned (NGN)",t.discount_earned||0],
+    ["Discount paid during year (NGN)",t.discount_paid_year||0],
+    ["Outstanding discount at year end (NGN)",t.discount_outstanding_at_year_end||0],
+    [],
+    ["Month","Gross sales (NGN)","Returns value (NGN)","Net sales (NGN)","Transactions made","Units sold","Units returned"]
+  ];
+  const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  (latestYearlyReport.months||[]).forEach(m=>rows.push([
+    monthNames[Number(m.month)-1],m.gross_sales,m.returns_value,m.net_sales,m.transactions,m.units_sold,m.units_returned
+  ]));
+  rows.push([],["Employee","Account status","Gross sales (NGN)","Returns value (NGN)","Net sales (NGN)","Transactions made","Units sold","Units returned","Discount earned (NGN)","Discount paid during year (NGN)","Outstanding discount at year end (NGN)"]);
+  (latestYearlyReport.employees||[]).forEach(e=>rows.push([
+    e.full_name,e.is_deleted?"Deleted":"Active",e.gross_sales,e.returns_value,e.net_sales,e.transactions,e.units_sold,e.units_returned,
+    e.discount_earned,e.discount_paid_year,e.discount_outstanding_at_year_end
+  ]));
+  const csv="\uFEFF"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download="Bunnyinboxforkids_Yearly_Sales_"+latestYearlyReport.year+".csv";
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+});
 
 let latestMonthlyReport=null;
 const reportMonthInput=$("adminReportMonth");
