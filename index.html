@@ -31,6 +31,8 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
 .line{display:flex;justify-content:space-between;gap:10px;align-items:center}
 .actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
 .actions button{padding:9px 12px}
+.reveal-btn{font-size:12px;padding:7px 12px;margin-top:8px}
+.masked{letter-spacing:2px}
 #reader,#saleReader{width:100%;margin-top:12px}
 @media(min-width:650px){.grid{grid-template-columns:repeat(4,1fr)}}
 </style>
@@ -101,13 +103,24 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
 <div class="metric"><span class="muted">Stock items</span><strong id="stockCount">0</strong></div>
 <div class="metric"><span class="muted">Units available</span><strong id="stockUnits">0</strong></div>
 <div class="metric"><span class="muted">Sales today</span><strong id="salesCount">0</strong></div>
-<div class="metric"><span class="muted">Sales total</span><strong id="salesTotal">₦0</strong></div>
+<div class="metric"><span class="muted">Sales total</span><strong id="salesTotal">••••••</strong><button type="button" class="secondary reveal-btn" data-reveal="salesTotal">View</button></div>
+<div class="metric"><span class="muted">Unpaid discount balance</span><strong id="discountBalance">••••••</strong><button type="button" class="secondary reveal-btn" data-reveal="discountBalance">View</button></div>
 </div>
 <div id="homeMessage" class="notice">Your employee workspace.</div>
 </section>
 
 <section id="stock" class="panel hidden">
 <h2>Upload daily stock</h2>
+<div class="panel" style="background:#faf7f3">
+  <h2>Bulk upload stock with CSV</h2>
+  <p class="muted">Use columns: barcode, product_name, colour, size_years, opening_stock_qty, selling_price_ngn. Imported products are added only to your own employee stock.</p>
+  <button type="button" class="secondary" id="downloadCsvTemplate">Download CSV template</button>
+  <label for="stockCsv">Choose CSV file</label>
+  <input id="stockCsv" type="file" accept=".csv,text/csv">
+  <button type="button" class="full" id="importCsvButton">Import CSV stock</button>
+  <div id="csvMessage" class="notice hidden"></div>
+</div>
+<h2>Add one product manually</h2>
 <form id="stockForm">
 <label for="barcode">Barcode</label><input id="barcode" required placeholder="Scan or enter barcode">
 <div class="actions">
@@ -138,7 +151,12 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
 </div>
 <div id="saleReader"></div>
 <div id="cart"></div>
-<div class="notice" id="cartTotals">Subtotal: ₦0 · Discount: ₦0 · Total: ₦0</div>
+<div class="notice" id="cartTotals">
+  <div>Subtotal: <strong id="cartSubtotal">••••••</strong></div>
+  <div>Discount: <strong id="cartDiscount">••••••</strong></div>
+  <div>Total: <strong id="cartTotal">••••••</strong></div>
+  <button type="button" class="secondary reveal-btn" data-reveal="cartFinancials">View</button>
+</div>
 <label for="paymentMethod">Payment method</label>
 <select id="paymentMethod"><option value="Cash">Cash</option><option value="Transfer">Bank Transfer</option><option value="POS">POS</option></select>
 <label for="paymentStatus">Payment status</label>
@@ -147,7 +165,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
 <div id="checkoutMessage" class="notice hidden"></div>
 </section>
 
-<section id="history" class="panel hidden"><h2>Sales history</h2><div id="salesList">Loading sales…</div></section>
+<section id="history" class="panel hidden"><h2>Sales history</h2><button type="button" class="secondary reveal-btn" data-reveal="salesHistory">View amounts</button><div id="salesList">Loading sales…</div></section>
 <section id="returns" class="panel hidden">
 <h2>Customer returns</h2>
 <p class="muted">Select an item from an original sale. The returned quantity will be restored to your stock.</p>
@@ -162,6 +180,7 @@ const SUPABASE_URL="https://boglyupooamohtrfsyub.supabase.co";
 const SUPABASE_KEY="sb_publishable_6gPUK3tnseQPnn3CzoMAeg_EXJO68D5";
 const $=id=>document.getElementById(id);
 let db=null,currentUser=null,stockRows=[],cart=[],scanner=null,saleScanner=null;
+const revealed={salesTotal:false,discountBalance:false,cartFinancials:false,salesHistory:false};
 
 const money=n=>new Intl.NumberFormat("en-NG",{style:"currency",currency:"NGN",maximumFractionDigits:0}).format(Number(n)||0);
 const safe=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -193,12 +212,16 @@ async function loadAdminDashboard(){
   $("adminSalesToday").textContent=money(data?.sales_today||0);
   $("adminTransactions").textContent=data?.sales_count_today||0;
   $("adminEmployeeList").innerHTML=employees.length?employees.map(e=>`
-    <div class="item line">
-      <div><strong>${safe(e.full_name)}</strong>
-        <div class="muted">Sales: ${Number(e.sales_count)||0} · Stock: ${Number(e.stock_units)||0} · Total: ${money(e.sales_total)}</div>
-        <div class="muted">${e.is_active?"Active":"Inactive"}</div>
+    <div class="item">
+      <div class="line">
+        <div><strong>${safe(e.full_name)}</strong>
+          <div class="muted">Sales: ${Number(e.sales_count)||0} · Stock: ${Number(e.stock_units)||0} · Total: ${money(e.sales_total)}</div>
+          <div class="muted">${e.is_active?"Active":"Inactive"}</div>
+        </div>
+        <button class="secondary" type="button" onclick="setEmployeeActive('${safe(e.user_id)}',${!e.is_active})">${e.is_active?"Deactivate":"Activate"}</button>
       </div>
-      <button class="secondary" type="button" onclick="setEmployeeActive('${safe(e.user_id)}',${!e.is_active})">${e.is_active?"Deactivate":"Activate"}</button>
+      <div class="notice">Unpaid discount balance: <strong>${money(e.discount_outstanding||0)}</strong><br>Discount paid so far: ${money(e.discount_paid_total||0)}</div>
+      <button type="button" ${Number(e.discount_outstanding||0)<=0?"disabled":""} onclick="payEmployeeDiscount('${safe(e.user_id)}','${safe(e.full_name)}')">Discount Paid — full balance</button>
     </div>`).join(""):"No employee accounts yet.";
 }
 $("createEmployeeForm").addEventListener("submit",async e=>{
@@ -217,6 +240,15 @@ $("createEmployeeForm").addEventListener("submit",async e=>{
   }catch(err){msg("createEmployeeMessage",err.message||"Employee creation failed.",true);}
   finally{button.disabled=false;}
 });
+window.payEmployeeDiscount=async(id,name)=>{
+  if(!confirm("Confirm cash payment to "+name+"?\\n\\nThis records the FULL outstanding discount balance and clears it to zero."))return;
+  try{
+    const {data,error}=await db.rpc("employee_admin_pay_discount",{p_employee_id:id});
+    if(error)throw error;
+    alert("Cash payment recorded: "+money(data)+". The outstanding balance is now cleared.");
+    await loadAdminDashboard();
+  }catch(err){alert(err.message||"Could not record discount payment.");}
+};
 window.setEmployeeActive=async(id,active)=>{
   if(!confirm(active?"Activate this employee?":"Deactivate this employee?"))return;
   try{
@@ -234,6 +266,15 @@ function tab(name){
   if(name==="returns")loadReturns();
 }
 document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()=>tab(b.dataset.tab)));
+document.querySelectorAll("[data-reveal]").forEach(button=>button.addEventListener("click",async()=>{
+  const key=button.dataset.reveal;
+  revealed[key]=!revealed[key];
+  button.textContent=revealed[key]?"Hide":(key==="salesHistory"?"View amounts":"View");
+  if(key==="salesTotal")await loadSales();
+  if(key==="discountBalance")await loadDiscountBalance();
+  if(key==="salesHistory")await loadSales();
+  if(key==="cartFinancials")renderCart();
+}));
 
 async function enter(user){
   try{
@@ -261,6 +302,7 @@ async function enter(user){
 async function refreshAll(){
   await loadStock();
   await loadSales();
+  await loadDiscountBalance();
 }
 async function loadStock(){
   if(!currentUser)throw new Error("Please sign in again.");
@@ -277,6 +319,11 @@ async function loadStock(){
       <div style="text-align:right"><strong>${Number(x.remaining_qty)||0}</strong><div class="muted">${money(x.unit_price)}</div></div>
     </div>`).join(""):"No stock uploaded yet.";
 }
+async function loadDiscountBalance(){
+  const {data,error}=await db.rpc("employee_discount_balance");
+  if(error)throw error;
+  $("discountBalance").textContent=revealed.discountBalance?money(data||0):"••••••";
+}
 async function loadSales(){
   if(!currentUser)throw new Error("Please sign in again.");
   const {data,error}=await db.from("employee_sales")
@@ -286,12 +333,65 @@ async function loadSales(){
   const rows=data||[],start=new Date();start.setHours(0,0,0,0);
   const today=rows.filter(x=>new Date(x.created_at)>=start);
   $("salesCount").textContent=today.length;
-  $("salesTotal").textContent=money(today.reduce((s,x)=>s+Number(x.total||0),0));
+  $("salesTotal").textContent=revealed.salesTotal?money(today.reduce((s,x)=>s+Number(x.total||0),0)):"••••••";
   $("salesList").innerHTML=rows.length?rows.map(x=>`
     <div class="item line"><div><strong>${safe(x.sale_ref)}</strong>
       <div class="muted">${new Date(x.created_at).toLocaleString("en-NG")} · ${safe(x.payment_method)} · ${safe(x.payment_status)}</div>
-    </div><strong>${money(x.total)}</strong></div>`).join(""):"No sales yet.";
+    </div><strong>${revealed.salesHistory?money(x.total):"••••••"}</strong></div>`).join(""):"No sales yet.";
 }
+
+function parseCsvLine(line){
+  const cells=[];let value="",quoted=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='"'){
+      if(quoted&&line[i+1]==='"'){value+='"';i++;}
+      else quoted=!quoted;
+    }else if(ch===","&&!quoted){cells.push(value.trim());value="";}
+    else value+=ch;
+  }
+  cells.push(value.trim());return cells;
+}
+function parseCsvText(text){
+  const lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(line=>line.trim());
+  if(lines.length<2)throw new Error("CSV must contain a header and at least one product row.");
+  const headers=parseCsvLine(lines[0]).map(x=>x.toLowerCase().trim());
+  const required=["barcode","product_name","colour","size_years","opening_stock_qty","selling_price_ngn"];
+  const missing=required.filter(x=>!headers.includes(x));
+  if(missing.length)throw new Error("Missing CSV columns: "+missing.join(", "));
+  return lines.slice(1).map((line,index)=>{
+    const values=parseCsvLine(line),row={};
+    headers.forEach((h,i)=>row[h]=values[i]??"");
+    const qty=Number(row.opening_stock_qty);
+    const price=Number(String(row.selling_price_ngn).replace(/[₦,\s]/g,""));
+    if(!row.barcode?.trim()||!row.product_name?.trim())throw new Error("Row "+(index+2)+": barcode and product name are required.");
+    if(!Number.isInteger(qty)||qty<1)throw new Error("Row "+(index+2)+": opening_stock_qty must be a whole number greater than zero.");
+    if(!Number.isFinite(price)||price<100)throw new Error("Row "+(index+2)+": selling_price_ngn must be at least ₦100.");
+    return {barcode:row.barcode.trim(),product_name:row.product_name.trim(),colour:(row.colour||"").trim(),
+      size_label:(row.size_years||"").trim(),quantity:qty,unit_price:price};
+  });
+}
+$("downloadCsvTemplate").addEventListener("click",()=>{
+  const csv="barcode,product_name,colour,size_years,opening_stock_qty,selling_price_ngn\n890001,Bunny T-shirt,Blue,2 years,20,7500\n";
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download="employee_stock_upload_template.csv";a.click();URL.revokeObjectURL(url);
+});
+$("importCsvButton").addEventListener("click",async()=>{
+  const file=$("stockCsv").files[0],button=$("importCsvButton");
+  if(!file)return msg("csvMessage","Choose a CSV file first.",true);
+  button.disabled=true;
+  try{
+    const rows=parseCsvText(await file.text());
+    const {error}=await db.rpc("employee_add_stock",{p_items:rows});
+    if(error)throw error;
+    msg("csvMessage",rows.length+" product rows imported successfully into your employee stock.");
+    $("stockCsv").value="";
+    await loadStock();
+  }catch(err){msg("csvMessage",err.message||"CSV import failed.",true);}
+  finally{button.disabled=false;}
+});
+
 $("stockForm").addEventListener("submit",async e=>{
   e.preventDefault();$("uploadButton").disabled=true;
   try{
@@ -312,14 +412,18 @@ function renderCart(){
   $("cart").innerHTML=cart.length?cart.map((x,i)=>{
     const line=x.unit_price*x.quantity;subtotal+=line;discount+=100*x.quantity;
     return `<div class="item"><div class="line"><div><strong>${safe(x.product_name)}</strong>
-      <div class="muted">${money(x.unit_price)} each · ${safe(x.barcode)}</div></div>
-      <strong>${money((x.unit_price-100)*x.quantity)}</strong></div>
+      <div class="muted">Quantity: ${x.quantity} · ${safe(x.barcode)}</div></div>
+      <strong>••••••</strong></div>
       <div class="actions"><button class="secondary" type="button" onclick="changeQty(${i},-1)">−</button>
       <strong style="padding:9px">${x.quantity}</strong>
       <button class="secondary" type="button" onclick="changeQty(${i},1)">+</button>
       <button class="danger" type="button" onclick="removeCart(${i})">Remove</button></div></div>`;
   }).join(""):"No products added to this sale.";
-  $("cartTotals").textContent="Subtotal: "+money(subtotal)+" · Discount: "+money(discount)+" · Total: "+money(subtotal-discount);
+  $("cartSubtotal").textContent=revealed.cartFinancials?money(subtotal):"••••••";
+  $("cartDiscount").textContent=revealed.cartFinancials?money(discount):"••••••";
+  $("cartTotal").textContent=revealed.cartFinancials?money(subtotal-discount):"••••••";
+  const revealButton=$("cartTotals").querySelector("[data-reveal='cartFinancials']");
+  if(revealButton)revealButton.textContent=revealed.cartFinancials?"Hide":"View";
 }
 window.changeQty=(i,d)=>{
   const n=cart[i].quantity+d;if(n<1)return;
