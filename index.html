@@ -10,6 +10,13 @@
 *{box-sizing:border-box}
 body{margin:0;background:#f7f3ed;color:#302820;font-family:Arial,sans-serif}
 header{background:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e5ddd3;position:sticky;top:0;z-index:3}
+header>div{min-width:0;flex:1}
+header #logout{flex-shrink:0;white-space:nowrap}
+@media(max-width:480px){
+  header{padding:12px;gap:10px}
+  .brand{font-size:19px}
+  header #logout{padding:10px 11px;font-size:13px}
+}
 .brand{font:21px Georgia,serif;color:#654b36}
 main{max-width:1000px;margin:auto;padding:16px}
 .panel{background:#fff;border:1px solid #e5ddd3;border-radius:13px;padding:17px;margin:13px 0}
@@ -98,7 +105,10 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
 </nav>
 
 <section id="home" class="panel">
-<h2>Today's overview</h2>
+<div class="line" style="margin-bottom:14px">
+<h2 style="margin:5px 0">Today's overview</h2>
+<button type="button" class="secondary" id="refreshOverview">Refresh</button>
+</div>
 <div class="grid">
 <div class="metric"><span class="muted">Stock items</span><strong id="stockCount">0</strong></div>
 <div class="metric"><span class="muted">Units available</span><strong id="stockUnits">0</strong></div>
@@ -308,6 +318,20 @@ async function refreshAll(){
   await loadSales();
   await loadDiscountBalance();
 }
+$("refreshOverview").addEventListener("click",async()=>{
+  const button=$("refreshOverview");
+  button.disabled=true;
+  button.textContent="Refreshing…";
+  try{
+    await refreshAll();
+    msg("homeMessage","Overview refreshed successfully.");
+  }catch(err){
+    msg("homeMessage",err.message||"Could not refresh the overview.",true);
+  }finally{
+    button.disabled=false;
+    button.textContent="Refresh";
+  }
+});
 async function loadStock(){
   if(!currentUser)throw new Error("Please sign in again.");
   const {data,error}=await db.from("employee_stock")
