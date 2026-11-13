@@ -78,6 +78,9 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
       <div class="metric"><span class="muted">Employees</span><strong id="adminEmployees">0</strong></div>
       <div class="metric"><span class="muted">Sales Today</span><strong id="adminSalesToday">₦0</strong></div>
       <div class="metric"><span class="muted">Transactions Today</span><strong id="adminTransactions">0</strong></div>
+      <div class="metric"><span class="muted">Combined Opening Stock Value</span><strong id="adminOpeningStockValue">₦0</strong></div>
+      <div class="metric"><span class="muted">Combined Current Stock Value</span><strong id="adminCurrentStockValue">₦0</strong></div>
+      <div class="metric"><span class="muted">Total Pieces Remaining</span><strong id="adminStockUnits">0</strong></div>
     </div>
     <button class="full" type="button" onclick="loadAdminDashboard()">Refresh Dashboard</button>
   </div>
@@ -143,6 +146,8 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
 <div class="grid">
 <div class="metric"><span class="muted">Stock items</span><strong id="stockCount">0</strong></div>
 <div class="metric"><span class="muted">Units available</span><strong id="stockUnits">0</strong></div>
+ <div class="metric"><span class="muted">Opening Stock Value</span><strong id="openingStockValue">₦0</strong></div>
+ <div class="metric"><span class="muted">Current Stock Value</span><strong id="currentStockValue">₦0</strong></div>
 <div class="metric"><span class="muted">Sales today</span><strong id="salesCount">0</strong></div>
 <div class="metric"><span class="muted">Sales total</span><strong id="salesTotal">••••••</strong><button type="button" class="secondary reveal-btn" data-reveal="salesTotal">View</button></div>
 <div class="metric"><span class="muted">Unpaid discount balance</span><strong id="discountBalance">••••••</strong><button type="button" class="secondary reveal-btn" data-reveal="discountBalance">View</button></div>
@@ -182,7 +187,7 @@ button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#eee7df;colo
 <label for="price">Selling price per unit (₦)</label><input id="price" type="number" min="100" step="1" required>
 <button class="full" id="uploadButton" type="submit">Add stock</button>
 </form>
-<div class="notice">Adding the same barcode again on the same day adds to its existing quantity.</div>
+<div class="notice">Each stock upload is saved as a separate delivery batch. Previous batches and their opening values remain unchanged.</div>
 <h2 style="margin-top:24px">Available stock</h2>
 <div id="stockList" class="muted">Loading stock…</div>
 </section>
@@ -260,11 +265,15 @@ async function loadAdminDashboard(){
   $("adminEmployees").textContent=employees.filter(e=>!e.is_deleted).length;
   $("adminSalesToday").textContent=money(data?.sales_today||0);
   $("adminTransactions").textContent=data?.sales_count_today||0;
+  $("adminOpeningStockValue").textContent=money(employees.reduce((n,e)=>n+Number(e.opening_stock_value||0),0));
+  $("adminCurrentStockValue").textContent=money(employees.reduce((n,e)=>n+Number(e.current_stock_value||0),0));
+  $("adminStockUnits").textContent=employees.reduce((n,e)=>n+Number(e.stock_units||0),0).toLocaleString("en-NG");
   $("adminEmployeeList").innerHTML=employees.length?employees.map(e=>`
     <div class="item">
       <div class="line">
         <div><strong>${safe(e.full_name)}</strong>
-          <div class="muted">Transactions: ${Number(e.sales_count)||0} · Stock: ${Number(e.stock_units)||0} · Sales Total: ${money(e.sales_total)}</div>
+          <div class="muted">Transactions: ${Number(e.sales_count)||0} · Pieces remaining: ${Number(e.stock_units)||0} · Sales Total: ${money(e.sales_total)}</div>
+          <div class="muted">Opening stock value: <strong>${money(e.opening_stock_value||0)}</strong> · Current stock value: <strong>${money(e.current_stock_value||0)}</strong></div>
           <div class="muted">${e.is_deleted?"Deleted":(e.is_active?"Active":"Inactive")}</div>
         </div>
         ${e.is_deleted
@@ -560,15 +569,17 @@ $("refreshOverview").addEventListener("click",async()=>{
 async function loadStock(){
   if(!currentUser)throw new Error("Please sign in again.");
   const {data,error}=await db.from("employee_stock")
-    .select("id,barcode,product_name,size_label,colour,remaining_qty,unit_price")
-    .eq("employee_id",currentUser.id).order("product_name");
+    .select("id,barcode,product_name,size_label,colour,opening_qty,remaining_qty,unit_price,created_at")
+    .eq("employee_id",currentUser.id).order("created_at",{ascending:true});
   if(error)throw error;
   stockRows=data||[];
   $("stockCount").textContent=stockRows.length;
-  $("stockUnits").textContent=stockRows.reduce((s,x)=>s+Number(x.remaining_qty||0),0);
+  $("stockUnits").textContent=stockRows.reduce((s,x)=>s+Number(x.remaining_qty||0),0).toLocaleString("en-NG");
+  $("openingStockValue").textContent=money(stockRows.reduce((s,x)=>s+Number(x.opening_qty||0)*Number(x.unit_price||0),0));
+  $("currentStockValue").textContent=money(stockRows.reduce((s,x)=>s+Number(x.remaining_qty||0)*Number(x.unit_price||0),0));
   $("stockList").innerHTML=stockRows.length?stockRows.map(x=>`
     <div class="item line"><div><strong>${safe(x.product_name)}</strong>
-      <div class="muted">${safe([x.barcode,x.size_label,x.colour].filter(Boolean).join(" · "))}</div></div>
+      <div class="muted">${safe([x.barcode,x.size_label,x.colour].filter(Boolean).join(" · "))}</div><div class="muted">Opening: ${Number(x.opening_qty)||0} · Batch: ${safe(x.created_at?new Date(x.created_at).toLocaleDateString("en-NG"):"")}</div></div>
       <div style="text-align:right"><strong>${Number(x.remaining_qty)||0}</strong><div class="muted">${money(x.unit_price)}</div></div>
     </div>`).join(""):"No stock uploaded yet.";
 }
@@ -705,7 +716,7 @@ window.changeQty=(i,d)=>{
 };
 window.removeCart=i=>{cart.splice(i,1);renderCart();};
 function addByBarcode(code){
-  const product=stockRows.find(x=>String(x.barcode)===String(code));
+  const product=stockRows.find(x=>String(x.barcode)===String(code)&&Number(x.remaining_qty)>0);
   if(!product)return alert("Barcode not found in your available stock.");
   if(Number(product.remaining_qty)<1)return alert("This product is out of stock.");
   const existing=cart.find(x=>x.id===product.id);
